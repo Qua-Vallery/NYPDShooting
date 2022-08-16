@@ -1,0 +1,275 @@
+---
+title: "NYPD Historical Shooting Analysis"
+author: "Quashaun Vallery"
+date: '2022-07-03'
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+## Description of Data
+
+The NYPD Shooting Incident Historical data lists every shooting incident that occurred in NYC going back to 2006 through 
+2021. This data is manually extracted every quarter and reviewed by the Office of Management Analysis and Planning before being posted on the NYPD website. Each record represents a shooting incident in NYC and includes information about the event, the location and time of occurrence. In addition, information related to suspect and victim demographics is also included.
+
+Below is a description of all columns in the dataset:
+
+1. INCIDENT_KEY: Randomly generated persistent ID for each incident
+2. OCCUR DATE: Exact date of the shooting incident
+3. OCCUR TIME: Exact time of the shooting incident
+4. BORO: Borough where the shooting incident occurred
+5. PRECINCT: Precinct where the shooting incident occurred
+6. JURISDICTION_CODE: Jurisdiction where the shooting incident occurred. Jurisdiction codes 0(Patrol), 1(Transit), and 2(Housing) represent NYPD whilst codes 3 and more represent non NYPD jurisdictions.
+7. LOCATION_DESC: Location of the shooting incident
+8. STATISTICAL_MURDER_FLAG: Shooting resulted in the victim's death which would be counted as a murder
+9. PERP_AGE_GROUP: Perpetrator's age within a category
+10. PERP SEX: Perpetrator's age within a category
+11. PERP RACE: Perpetrator's race description
+12. VIC_AGE_GROUP: Victim's age within a category
+13. VIC SEX: Victim's sex description
+14. VIC RACE: Victim's race description
+15. X_COORD_CD: Midblock X-coordinate for New York State Plane Coordinate System, Long Island Zone, NAD83, units fleet (FIPS 3104)
+16. Y_COORD_CD: Midblock Y-coordinate for New York State Plane Coordinate System, Long Island Zone, NAD83, units fleet (FIPS 3104)
+
+## Objective
+
+For this analysis I answer the following questions:
+
+1. What day of the week do shootings occur the most?
+2. How many shootings are there per year? What is the trend over time?
+3. What borough has the most shooting incidents? Does the borough with the most shootings change year-to-year?
+
+Finally, I developed a linear regression model to predict murders as a function of shootings.
+
+## Import Libraries and Data
+
+I started by importing the necessary libraries and data.
+
+```{r import libraries, echo = TRUE}
+library(tidyverse)
+library(lubridate)
+library(tidyquant)
+
+NYPD_shooting_tbl <- read_csv("NYPD_Shooting_Incident_Data__Historic_.csv")
+
+```
+
+
+## Examine Data
+
+I then examined the data for any import issues or missing values. There were no issues reading in the file. However, there were five columns with missing data.
+
+* JURISDICTION_CODE 
+* LOCATION_DESC
+* PERP_AGE_GROUP
+* PERP_SEX
+* PERP_RACE
+
+There are the same number of observations (9,310) missing from the PERP_SEX and PERP_RACE columns. The first bias that came to mind was that these are probably shooting incidents when a suspect was unidentifiable resulting in an unsolved case. However, I don't have the evidence to prove that. Additionally, those fields are not needed for this analysis.
+
+
+```{r examine, echo = TRUE}
+
+    # Check for problems reading in the file
+    readr::problems(NYPD_shooting_tbl) 
+    
+    
+    # High-level view
+    NYPD_shooting_tbl %>% glimpse()
+    
+    # Check for empty fields
+    find_NAs <- colSums(is.na(NYPD_shooting_tbl))
+    find_NAs
+ 
+```
+## Tidy and Transform
+
+```{r tidy and transform, echo = TRUE}
+
+    # convert occur_date from character to date field
+    NYPD_shooting_tbl <- NYPD_shooting_tbl %>%
+        mutate(OCCUR_DATE= as.Date(OCCUR_DATE, format = "%m/%d/%Y")) %>% 
+        mutate(year_of_shooting = year(OCCUR_DATE)) %>%
+    
+    # Remove columns with missing data and select fields needed to answer my questions
+        select(-JURISDICTION_CODE, -LOCATION_DESC, -PERP_SEX, 
+               -PERP_AGE_GROUP, -PERP_RACE) %>% glimpse()
+    
+    # Make sure all missing data has been resolved
+    find_NAs <- colSums(is.na(NYPD_shooting_tbl))
+    find_NAs
+```
+
+## Analysis and Visualization
+### What day of the week do shootings occur the most?
+Most shootings happened on the weekend with Sunday and Saturday accounting for 20 and 19 percent, respectively,  of all shootings throughout the week. 
+
+```{r day_shootings, echo = TRUE}
+
+    day_shooting_tbl <- NYPD_shooting_tbl %>%
+        select(OCCUR_DATE, year_of_shooting) %>%
+        mutate(day_of_week = wday(OCCUR_DATE, label = TRUE, abbr = TRUE)) %>%
+        mutate(count = 1) 
+    
+    day_shooting_summary_tbl <- day_shooting_tbl %>%
+        group_by(day_of_week) %>%
+        summarize(total_shootings = sum(count)) %>%
+        arrange(desc(total_shootings)) %>%
+        mutate(pct = total_shootings / sum(total_shootings)) %>%
+        mutate(pct = scales::percent(pct, accuracy = 1.)) %>%
+        ungroup()
+    
+    day_shooting_summary_tbl
+    
+    day_shooting_plot <- day_shooting_summary_tbl %>%
+        ggplot(aes(x = day_of_week, y = total_shootings)) +
+        geom_point() +
+        theme_tq()
+    
+    day_shooting_plot
+
+```
+
+### How many shootings are there per year? What is the trend over time?
+
+The number of shootings per year ranged from 967 to 2,055 over the 15-year period. Shootings had been steadily declining from 2006, with big drops in 2011 through 2013 and 2015 through 2017.  However, shootings increased sharply after 2019, and were back to 2006 levels by 2021. 
+
+After seeing this trend, I was curious whether the COVID-19 pandemic had something to do with the increased shootings. However, I didn't go further with this line of thinking because that would have required gathering additional data sources.
+
+```{r shootings per year, echo = TRUE}
+
+shooting_by_yr_tbl <- NYPD_shooting_tbl %>%
+        select(OCCUR_DATE, year_of_shooting) %>%
+        mutate(count = 1) %>%
+        
+        group_by(year_of_shooting) %>%
+        summarize(total_shootings = sum(count)) %>%
+        ungroup()
+    
+    shooting_by_yr_plot <-  shooting_by_yr_tbl %>% 
+        ggplot(aes(x = year_of_shooting, y = total_shootings)) +
+        geom_line() +
+        geom_point(shape = 20) +
+        theme_tq()
+    
+    
+    shooting_by_yr_tbl
+    shooting_by_yr_plot
+
+```
+
+### What borough has the most shooting incidents? Does the borough with the most shootings change year-to-year?
+
+Forty percent of all shootings over the 15-year period occurred in Brooklyn. I was curious if this was the case for all years and found that most shooting incidents occurred in Brooklyn except for the year 2021. Most shootings occurred in the Bronx in 2021. Lastly, I created box plots for each borough to see the distribution of shootings by borough.
+
+
+```{r boroughs, echo = TRUE}
+
+    boro_shooting_tbl <- NYPD_shooting_tbl %>%
+        select(BORO, PRECINCT, year_of_shooting) %>%
+        mutate(count = 1)
+    
+    boro_shooting_summary_tbl <- boro_shooting_tbl %>%
+        group_by(BORO) %>%
+        summarize(total_shootings = sum(count)) %>%
+        arrange(desc(total_shootings)) %>%
+        mutate(pct = total_shootings / sum(total_shootings)) %>%
+        mutate(pct = scales::percent(pct, accuracy = 1.)) %>%
+        ungroup()
+    
+    boro_shooting_by_yr_tbl <- boro_shooting_tbl %>%
+        select(BORO, year_of_shooting, count) %>%
+        group_by(year_of_shooting, BORO) %>%
+        summarize(total_shootings = sum(count)) %>%
+        ungroup()
+    
+    
+    boro_shooting_by_yr_spread <- boro_shooting_by_yr_tbl %>%
+        spread(key = BORO, value = total_shootings) 
+    
+    boro_shooting_by_yr_spread$row_max <- apply(boro_shooting_by_yr_spread[,-1], 1, max)
+    boro_shooting_by_yr_spread
+    
+    boro_shooting_by_yr_plot <- boro_shooting_by_yr_tbl %>%
+        group_by(year_of_shooting) %>%
+        ggplot(aes(x = BORO, y = total_shootings)) +
+        geom_boxplot() +
+        theme_tq() 
+    
+    boro_shooting_by_yr_plot
+    
+
+```
+
+## Modeling
+
+For my model, I chose the predict the number of murders as a function of shootings. The model does a pretty good job at predicting murders illustrating that the number of shooting is a pretty good indicator for murders.
+
+
+```{r model, echo = TRUE}
+    
+
+    # create total_num_yrs column 
+    NYPD_shooting_tbl <- NYPD_shooting_tbl %>%
+        mutate(total_num_yrs = max(year_of_shooting) - min(year_of_shooting))
+    
+    # create shooting tbl
+    shooting_by_yr_tbl <- NYPD_shooting_tbl %>%
+        select(OCCUR_DATE, year_of_shooting, total_num_yrs) %>%
+        mutate(count = 1) %>%
+        
+        group_by(year_of_shooting, total_num_yrs) %>%
+        summarize(total_shootings = sum(count)) %>%
+        ungroup()
+    
+    # create deaths tibble
+    deaths_by_yr_tbl <- NYPD_shooting_tbl %>%
+        select(OCCUR_DATE, year_of_shooting, total_num_yrs, STATISTICAL_MURDER_FLAG) %>%
+        mutate(count = 1) %>%
+        mutate(murder_count = case_when(
+            STATISTICAL_MURDER_FLAG == TRUE ~ 1,
+            STATISTICAL_MURDER_FLAG == FALSE ~ 0)) %>%
+        
+        group_by(year_of_shooting, total_num_yrs) %>%
+        summarize(total_murders = sum(murder_count)) %>%
+        ungroup()
+        
+    
+    # join tibbles
+    joined_tbl <- left_join(shooting_by_yr_tbl, deaths_by_yr_tbl,
+                            by = c("year_of_shooting" = "year_of_shooting"))
+    
+    joined_tbl <- joined_tbl %>%
+        select(-total_num_yrs.y)
+    
+    joined_tbl
+    
+    # my model: estimate linear regression
+    my_mod <- lm(total_murders ~ total_shootings, joined_tbl)
+    summary(my_mod)
+    
+    # create data for ggplot
+    data_mod_tbl <- tibble(predicted = predict(my_mod),
+                           observed = joined_tbl$total_murders)
+
+    # create plot
+    ggplot(data_mod_tbl,
+           aes(x = predicted, 
+               y = observed)) +
+        geom_point() +
+        geom_abline(intercept = 0,
+                    slope = 1,
+                    color = "red",
+                    size = 2) +
+        theme_tq()
+
+
+```
+
+## Bias
+A bias that I had going into the project was that borough with the highest rate of poverty in NYC would also have the highest number of shootings. I also assumed that because the cost of living in Manhattan is astronomical, that it would have the least amount of shootings. I was wrong about both! 
+
+Brooklyn had the most shootings, which has less poverty than the Bronx, and Staten Island had the least shootings, not Manhattan. However, I avoided confirmation bias just by letting the data speak for itself throughout my analysis. I did not modify any observations or cherry pick data.
+
+
